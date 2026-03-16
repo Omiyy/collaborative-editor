@@ -38,6 +38,9 @@ export default function EditorPage() {
   const [currentRoomId, setCurrentRoomId] = useState(null);
   const autosaveTimerRef = useRef(null);
   const pendingContentRef = useRef(null);
+  const wsSendTimerRef = useRef(null);
+  const latestWsContentRef = useRef(null);
+  const lastActivityLogAtRef = useRef(0);
 
   const loadRoomUsers = async (roomId) => {
     const roomUsers = await apiService.getUsersInRoom(roomId);
@@ -193,8 +196,16 @@ export default function EditorPage() {
       prev ? { ...prev, content: value } : prev
     );
 
-    // Send update through WebSocket
-    websocketService.sendCodeUpdate(value);
+    // Send realtime updates in short bursts to reduce collisions and improve throughput.
+    latestWsContentRef.current = value;
+    if (!wsSendTimerRef.current) {
+      wsSendTimerRef.current = setTimeout(() => {
+        if (latestWsContentRef.current !== null) {
+          websocketService.sendCodeUpdate(latestWsContentRef.current);
+        }
+        wsSendTimerRef.current = null;
+      }, 80);
+    }
 
     // Persist to DB every 2 seconds while typing.
     pendingContentRef.current = value;
@@ -203,20 +214,20 @@ export default function EditorPage() {
         try {
           if (selectedDocId && pendingContentRef.current !== null) {
             await apiService.updateDocument(selectedDocId, pendingContentRef.current);
+
+            // Avoid flooding activity log endpoint while typing.
+            const now = Date.now();
+            if (now - lastActivityLogAtRef.current > 10000) {
+              await apiService.logActivity(selectedDocId, 'edited document');
+              lastActivityLogAtRef.current = now;
+            }
           }
         } catch (error) {
           console.error('Auto-save failed:', error);
         } finally {
           autosaveTimerRef.current = null;
         }
-      }, 2000);
-    }
-
-    // Log the activity
-    try {
-      await apiService.logActivity(selectedDocId, 'edited document');
-    } catch (error) {
-      console.error('Failed to log activity:', error);
+      }, 1000);
     }
   };
 
@@ -224,6 +235,9 @@ export default function EditorPage() {
     return () => {
       if (autosaveTimerRef.current) {
         clearTimeout(autosaveTimerRef.current);
+      }
+      if (wsSendTimerRef.current) {
+        clearTimeout(wsSendTimerRef.current);
       }
     };
   }, []);
