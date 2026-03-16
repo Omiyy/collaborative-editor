@@ -33,10 +33,36 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // CORS Configuration
+const normalizeOrigin = (origin = '') => origin.trim().replace(/\/$/, '');
+
+const configuredOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173')
+  .split(',')
+  .map((origin) => normalizeOrigin(origin))
+  .filter(Boolean);
+
+const isOriginAllowed = (requestOrigin) => {
+  const origin = normalizeOrigin(requestOrigin);
+  if (!origin) return true;
+
+  return configuredOrigins.some((allowedOrigin) => {
+    // Support wildcard patterns like https://*.vercel.app
+    if (allowedOrigin.includes('*')) {
+      const escaped = allowedOrigin
+        .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+        .replace(/\*/g, '.*');
+      return new RegExp(`^${escaped}$`).test(origin);
+    }
+    return allowedOrigin === origin;
+  });
+};
+
 const corsOptions = {
-  origin: process.env.CORS_ORIGIN
-    ? process.env.CORS_ORIGIN.split(',').map((origin) => origin.trim())
-    : ['http://localhost:5173'],
+  origin: (origin, callback) => {
+    if (isOriginAllowed(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
