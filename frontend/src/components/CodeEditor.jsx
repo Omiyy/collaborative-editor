@@ -1,0 +1,267 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Bold,
+  Italic,
+  Underline,
+  List,
+  ListOrdered,
+  Quote,
+  Type,
+  Undo2,
+  Redo2,
+  AlignLeft,
+  AlignCenter,
+  AlignRight,
+} from 'lucide-react';
+
+export default function CodeEditor({ content, onChange, readOnly = false }) {
+  const editorRef = useRef(null);
+  const lastEmittedContentRef = useRef('');
+  const pendingExternalContentRef = useRef(null);
+  const [isFocused, setIsFocused] = useState(false);
+  const [activeStates, setActiveStates] = useState({
+    bold: false,
+    italic: false,
+    underline: false,
+    unorderedList: false,
+    orderedList: false,
+    blockquote: false,
+    heading: false,
+    alignLeft: false,
+    alignCenter: false,
+    alignRight: false,
+  });
+
+  const isEmpty = useMemo(() => {
+    if (!content) return true;
+    const plain = content
+      .replace(/<br\s*\/?>(\n)?/gi, ' ')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .trim();
+    return plain.length === 0;
+  }, [content]);
+
+  useEffect(() => {
+    if (!editorRef.current) return;
+
+    const normalized = content && content.trim() ? content : '';
+
+    // While the local user is typing, avoid rewriting innerHTML to keep caret stable.
+    // Queue external updates and apply them on blur.
+    if (isFocused) {
+      if (normalized !== lastEmittedContentRef.current) {
+        pendingExternalContentRef.current = normalized;
+      }
+      return;
+    }
+
+    const nextContent =
+      pendingExternalContentRef.current !== null
+        ? pendingExternalContentRef.current
+        : normalized;
+
+    if (editorRef.current.innerHTML !== nextContent) {
+      editorRef.current.innerHTML = nextContent;
+    }
+
+    pendingExternalContentRef.current = null;
+    lastEmittedContentRef.current = nextContent;
+  }, [content, isFocused]);
+
+  const emitChange = () => {
+    if (!editorRef.current || !onChange) return;
+    const html = editorRef.current.innerHTML;
+    lastEmittedContentRef.current = html;
+    onChange(html);
+  };
+
+  const applyCommand = (command, value = null) => {
+    if (readOnly) return;
+    editorRef.current?.focus();
+    document.execCommand(command, false, value);
+    updateActiveStates();
+    emitChange();
+  };
+
+  const handleInput = () => {
+    updateActiveStates();
+    emitChange();
+  };
+
+  const toolbarButtonBase =
+    'h-8 min-w-8 px-2 inline-flex items-center justify-center rounded-md border border-transparent bg-transparent hover:bg-[#f1f3f4] text-[#5f6368] transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+
+  const toolbarButtonActive =
+    'text-[#202124] border-[#d3ccd0] bg-gradient-to-b from-[#f0ebee] to-[#e6dfe3] shadow-[inset_0_1px_0_rgba(255,255,255,0.65)]';
+
+  const getButtonClass = (isActive) =>
+    `${toolbarButtonBase} ${isActive ? toolbarButtonActive : ''}`;
+
+  const updateActiveStates = () => {
+    if (!editorRef.current) return;
+
+    const selection = window.getSelection();
+    const inEditor =
+      selection && selection.rangeCount > 0
+        ? editorRef.current.contains(selection.anchorNode)
+        : false;
+
+    if (!inEditor) {
+      setActiveStates((prev) => {
+        const next = {
+          bold: false,
+          italic: false,
+          underline: false,
+          unorderedList: false,
+          orderedList: false,
+          blockquote: false,
+          heading: false,
+          alignLeft: false,
+          alignCenter: false,
+          alignRight: false,
+        };
+        return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+      });
+      return;
+    }
+
+    const blockValue = (document.queryCommandValue('formatBlock') || '').toLowerCase();
+    const alignValue = (document.queryCommandValue('justifyFull') || '').toLowerCase();
+
+    const next = {
+      bold: document.queryCommandState('bold'),
+      italic: document.queryCommandState('italic'),
+      underline: document.queryCommandState('underline'),
+      unorderedList: document.queryCommandState('insertUnorderedList'),
+      orderedList: document.queryCommandState('insertOrderedList'),
+      blockquote: blockValue.includes('blockquote'),
+      heading: blockValue.includes('h2'),
+      alignLeft:
+        document.queryCommandState('justifyLeft') || (!alignValue || alignValue === 'left'),
+      alignCenter: document.queryCommandState('justifyCenter') || alignValue === 'center',
+      alignRight: document.queryCommandState('justifyRight') || alignValue === 'right',
+    };
+
+    setActiveStates((prev) => {
+      if (
+        prev.bold === next.bold &&
+        prev.italic === next.italic &&
+        prev.underline === next.underline &&
+        prev.unorderedList === next.unorderedList &&
+        prev.orderedList === next.orderedList &&
+        prev.blockquote === next.blockquote &&
+        prev.heading === next.heading &&
+        prev.alignLeft === next.alignLeft &&
+        prev.alignCenter === next.alignCenter &&
+        prev.alignRight === next.alignRight
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    const handleSelectionChange = () => updateActiveStates();
+    document.addEventListener('selectionchange', handleSelectionChange);
+    return () => document.removeEventListener('selectionchange', handleSelectionChange);
+  }, []);
+
+  return (
+    <div className="h-full w-full flex flex-col overflow-hidden bg-gradient-to-b from-[#f7f7f8] via-[#f4f4f5] to-[#f1f1f2]">
+      <div className="h-12 px-4 border-b border-[#e5e7eb] bg-[#fbfbfc] flex items-center justify-between">
+        <div className="text-sm font-semibold text-[#202124]">Document</div>
+        <div className="px-3 py-1 rounded-full text-xs font-medium text-[#5f6368] bg-[#eef0f1] border border-[#e2e5e8]">
+          Saved
+        </div>
+      </div>
+
+      <div className="px-4 py-2 border-b border-[#e5e7eb] bg-[#fbfbfc] flex items-center flex-wrap gap-1">
+        <div className="h-8 px-3 rounded-md border border-[#e1e5e9] bg-white text-[#5f6368] text-sm flex items-center mr-2">
+          Normal
+        </div>
+
+        <button type="button" disabled={readOnly} className={toolbarButtonBase} onClick={() => applyCommand('undo')}>
+          <Undo2 size={15} />
+        </button>
+        <button type="button" disabled={readOnly} className={toolbarButtonBase} onClick={() => applyCommand('redo')}>
+          <Redo2 size={15} />
+        </button>
+
+        <div className="w-px h-6 bg-[#e0e3e7] mx-1" />
+
+        <button type="button" disabled={readOnly} className={getButtonClass(activeStates.bold)} onClick={() => applyCommand('bold')}>
+          <Bold size={15} />
+        </button>
+        <button type="button" disabled={readOnly} className={getButtonClass(activeStates.italic)} onClick={() => applyCommand('italic')}>
+          <Italic size={15} />
+        </button>
+        <button type="button" disabled={readOnly} className={getButtonClass(activeStates.underline)} onClick={() => applyCommand('underline')}>
+          <Underline size={15} />
+        </button>
+
+        <div className="w-px h-6 bg-[#e0e3e7] mx-1" />
+
+        <button type="button" disabled={readOnly} className={getButtonClass(activeStates.unorderedList)} onClick={() => applyCommand('insertUnorderedList')}>
+          <List size={15} />
+        </button>
+        <button type="button" disabled={readOnly} className={getButtonClass(activeStates.orderedList)} onClick={() => applyCommand('insertOrderedList')}>
+          <ListOrdered size={15} />
+        </button>
+        <button type="button" disabled={readOnly} className={getButtonClass(activeStates.alignLeft)} onClick={() => applyCommand('justifyLeft')}>
+          <AlignLeft size={15} />
+        </button>
+        <button type="button" disabled={readOnly} className={getButtonClass(activeStates.alignCenter)} onClick={() => applyCommand('justifyCenter')}>
+          <AlignCenter size={15} />
+        </button>
+        <button type="button" disabled={readOnly} className={getButtonClass(activeStates.alignRight)} onClick={() => applyCommand('justifyRight')}>
+          <AlignRight size={15} />
+        </button>
+
+        <div className="w-px h-6 bg-[#e0e3e7] mx-1" />
+
+        <button type="button" disabled={readOnly} className={getButtonClass(activeStates.blockquote)} onClick={() => applyCommand('formatBlock', 'blockquote')}>
+          <Quote size={15} />
+        </button>
+        <button type="button" disabled={readOnly} className={getButtonClass(activeStates.heading)} onClick={() => applyCommand('formatBlock', 'h2')}>
+          <Type size={15} />
+        </button>
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 md:p-8 [scroll-behavior:smooth]">
+        <div className="max-w-4xl mx-auto">
+          <div className="bg-white border border-[#e2e4e7] rounded-lg shadow-[0_8px_24px_rgba(15,23,42,0.06)] h-full min-h-[560px] p-6 md:p-10 relative">
+            {isEmpty && !isFocused && !readOnly && (
+              <div className="absolute left-6 top-6 md:left-10 md:top-10 text-[#b8bcc2] pointer-events-none select-none">
+                Start writing your document...
+              </div>
+            )}
+
+            <div
+              ref={editorRef}
+              contentEditable={!readOnly}
+              suppressContentEditableWarning
+              onInput={handleInput}
+              onFocus={() => setIsFocused(true)}
+              onBlur={() => {
+                setIsFocused(false);
+                if (pendingExternalContentRef.current !== null && editorRef.current) {
+                  editorRef.current.innerHTML = pendingExternalContentRef.current;
+                  lastEmittedContentRef.current = pendingExternalContentRef.current;
+                  pendingExternalContentRef.current = null;
+                }
+                updateActiveStates();
+              }}
+              onKeyUp={updateActiveStates}
+              onMouseUp={updateActiveStates}
+              className="min-h-[480px] outline-none text-[#202124] text-[17px] leading-8"
+              style={{ fontFamily: 'Georgia, Cambria, "Times New Roman", serif' }}
+              aria-label="Document editor"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
